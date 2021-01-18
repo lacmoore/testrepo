@@ -1,0 +1,209 @@
+If(
+    _submittingRequest,
+    If(
+        _editingRequest,
+        //if editing a request, revise the record that is being edited
+        Concurrent(
+            Patch(
+                Leave,
+                Gallery2.Selected,
+                {
+                    KidName: First(Requests).KidName,
+                    Year: First(Requests).Year,
+                    Month: First(Requests).Month,
+                    Day: First(Requests).Day,
+                    RequestDate: First(Requests).RequestDate,
+                    EarnedPoints: First(Requests).EarnedPoints,
+                    BonusPoints: First(Requests).BonusPoints,
+                    RequestID: Gallery2.Selected.RequestID
+                }
+            ),
+            //if parent approved the request, update the user's respective rewards balance to reflect 
+            If(
+                _parentView && _parentApproved,
+                Patch(
+                    Rewards,
+                    LookUp(
+                        Rewards, RewardID = _requesterRewardRecord.RewardID
+                    ),
+                    If(
+			
+                        Upper(First(Requests).WeekNum) = _requesterRewardRecord.WeekNum,
+                        {WeeklyNeeded: Value(_requesterRewardRecord.WeeklyNeeded) - (First(Requests).EarnedPoints+First(Requests).BonusPoints)}
+
+                    ),
+ 		   If(
+			
+                        Upper(First(Requests).Month) = _requesterRewardRecord.Month,
+                        {MonthlyNeeded: Value(_requesterRewardRecord.MonthlyNeeded) - (First(Requests).EarnedPoints+First(Requests).BonusPoints)}
+
+                    )
+                )
+            ),
+            //email template data is pulled from the RequestEdit record when editing a leave request
+            ClearCollect(
+                TemplateData,
+                {
+                    Field: "{Kid Name}",
+                    Data: If(_managerView, _requester.DisplayName, _myProfile.DisplayName)
+                },
+                {
+                    Field: "{RequestDate}",
+                    Data: First(Request).RequestDate
+                },
+                {
+                    Field: "{EarnedPoints}",
+                    Data: First(Requests).EarnedPoints
+                },
+                {
+                    Field: "{BonusPoints}",
+                    Data: First(Requests).BonusPoints
+                }
+                
+            )
+        ),
+        Concurrent(
+            //if making a new request, create a new row
+            Patch(
+                Rewards,
+                Defaults(Rewards),
+                {
+                   KidName: dcvKidName.Text,
+                    Year: Year(RequestDateValue.SelectedDate),
+                    Month: Month(RequestDateValue.SelectedDate),
+                    Day: Day(RequestDateValue.SelectedDate),
+                    RequestDate: Text(
+                    RequestDateValue.SelectedDate,
+                    "[$-en-US]mmm. dd, yyyy",
+                    EarnedPoints: RewardRequestEarnedPoints.Text,
+                    BonusPoints: RewardRequestBonusPoints.Text,
+                    RequestID: Gallery2.Selected.RequestID
+                }
+            ),
+            //email template data is pulled from the user inputted fields when making a new leave request
+            ClearCollect(
+                TemplateData,
+                {
+                Field: "{KidsName}",
+                Data: dcvKidName.Text
+            },
+            {
+                Field: "{Year}",
+                Data: Year(RequestDateValue.SelectedDate)
+            },
+            {
+                Field: "{Month}",
+                Data: Month(RequestDateValue.SelectedDate)
+            },
+            {
+                Field: "{Day}",
+                Data: Day(RequestDateValue.SelectedDate)
+            },
+            {
+                Field: "{RequestDate}",
+                Data: Text(
+                    RequestDateValue.SelectedDate,
+                    "[$-en-US]mmm. dd, yyyy"
+                )
+            },
+            {
+                Field: "{EarnedPoints}",
+                Data: RewardRequestEarnedPoints.Text
+            },
+            {
+                Field: "{BonusPoints}",
+                Data: RewardRequestBonusPoints.Text
+            }
+            )
+        )
+    );
+    //substitute template data values for place holder. If logged in as manager, use template 2, otherwise use template row 1
+    ForAll(
+        TemplateData,
+        Patch(
+            EmailTemplate,
+            LookUp(
+                EmailTemplate,
+                If(
+                    _managerView,
+                    Row = 2,
+                    Row = 1
+                )
+            ),
+            {
+                Value: Substitute(
+                    LookUp(
+                        EmailTemplate,
+                        If(
+                            _managerView,
+                            Row = 2,
+                            Row = 1
+                        )
+                    ).Value,
+                    Field,
+                    Data
+                )
+            }
+        )
+    );
+    //send email with email template
+        Office365Outlook.SendEmailV2(
+            If(_parentView, _requester.UserPrincipalName, _defaultApprover.UserPrincipalName), 
+            If(
+                _parentView,
+                "Reward Request " & First(Requests).Approved,
+                "New Reward Request"
+            ),
+            LookUp(
+                EmailTemplate,
+                If(
+                    _parentView,
+                    Row = 2,
+                    Row = 1
+                )
+            ).Value,
+            {Importance: "Normal"}
+        );
+    //reset templates to placeholder values
+ForAll(
+        TemplateData,
+        Patch(
+            EmailTemplate,
+            LookUp(
+                EmailTemplate,
+                If(
+                    _parentView,
+                    Row = 2,
+                    Row = 1
+                )
+            ),
+            {
+                Value: Substitute(
+                    LookUp(
+                        EmailTemplate,
+                        If(
+                            _parentView,
+                            Row = 2,
+                            Row = 1
+                        )
+                    ).Value,
+                    Data,
+                    Field
+                )
+            }
+        )
+    )
+);
+//reset all user input fields in new request sections
+Concurrent(
+    Set(
+        _submittingRequest,
+        false
+    ),
+    Set(_reviewRequest, false),
+     Set(
+        _defaultApprover,
+        Blank()
+    ),
+   
+)
